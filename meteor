@@ -1,6 +1,8 @@
-#!/bin/bash
+#!/usr/bin/env bash
 
-BUNDLE_VERSION=0.5.12
+# Note: 0.5.17 used on branch origin/npm3
+# Note: 0.5.20 used on branch origin/cordova-improvements
+BUNDLE_VERSION=0.5.18
 
 # OS Check. Put here because here is where we download the precompiled
 # bundles that are arch specific.

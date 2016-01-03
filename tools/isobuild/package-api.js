@@ -8,8 +8,9 @@ var files = require('../fs/files.js');
 var catalog = require('../packaging/catalog/catalog.js');
 
 function toArray (x) {
-  if (_.isArray(x))
+  if (_.isArray(x)) {
     return x;
+  }
   return x ? [x] : [];
 }
 
@@ -77,8 +78,10 @@ function PackageAPI (options) {
 
   self.buildingIsopackets = !!options.buildingIsopackets;
 
-  // source files used.  Map arch -> relPath -> {relPath, fileOptions}
-  self.sources = {};
+  // source files used.
+  // It's a multi-level map structured as:
+  //   arch -> sources|assets -> relPath -> {relPath, fileOptions}
+  self.files = {};
 
   // symbols exported
   self.exports = {};
@@ -90,7 +93,11 @@ function PackageAPI (options) {
   self.implies = {};
 
   _.each(compiler.ALL_ARCHES, function (arch) {
-    self.sources[arch] = {};
+    self.files[arch] = {
+      assets: [],
+      sources: []
+    };
+
     self.exports[arch] = [];
     self.uses[arch] = [];
     self.implies[arch] = [];
@@ -199,8 +206,9 @@ _.extend(PackageAPI.prototype, {
       try {
         var parsed = utils.parsePackageConstraint(name);
       } catch (e) {
-        if (!e.versionParserError)
+        if (!e.versionParserError) {
           throw e;
+        }
         buildmessage.error(e.message, {useMyCaller: true});
         // recover by ignoring
         continue;
@@ -261,8 +269,9 @@ _.extend(PackageAPI.prototype, {
       try {
         var parsed = utils.parsePackageConstraint(name);
       } catch (e) {
-        if (!e.versionParserError)
+        if (!e.versionParserError) {
           throw e;
+        }
         buildmessage.error(e.message, {useMyCaller: true});
         // recover by ignoring
         continue;
@@ -297,23 +306,71 @@ _.extend(PackageAPI.prototype, {
   /**
    * @memberOf PackageAPI
    * @instance
-   * @summary Specify the source code for your package.
+   * @summary Specify source code files for your package.
    * @locus package.js
-   * @param {String|String[]} filename Name of the source file, or array of
-   * strings of source file names.
-   * @param {String|String[]} [architecture] If you only want to export the file
-   * on the server (or the client), you can pass in the second argument
+   * @param {String|String[]} filenames Paths to the source files.
+   * @param {String|String[]} [architecture] If you only want to use the file
+   * on the server (or the client), you can pass this argument
    * (e.g., 'server', 'client', 'web.browser', 'web.cordova') to specify
    * what architecture the file is used with. You can specify multiple
-   * architectures by passing in an array, for example `['web.cordova', 'os.linux']`.
-   * @param {Object} [fileOptions] Options that will be passed to build
-   * plugins. For example, for JavaScript files, you can pass `{bare: true}`
-   * to not wrap the individual file in its own closure. To add a static asset,
-   * pass `{isAsset: true}`; use the `architecture` parameter to determine
-   * if this is a client-side asset served by the HTTP server or a server-side
-   * asset accessible to the `Assets` APIs.
+   * architectures by passing in an array, for example
+   * `['web.cordova', 'os.linux']`. By default, the file will be loaded on both
+   * server and client.
+   * @param {Object} [options] Options that will be passed to build
+   * plugins.
+   * @param {Boolean} [options.bare] If this file is JavaScript code or will
+   * be compiled into JavaScript code by a build plugin, don't wrap the
+   * resulting file in a closure. Has the same effect as putting a file into the
+   * `client/compatibility` directory in an app.
    */
   addFiles: function (paths, arch, fileOptions) {
+    if (fileOptions && fileOptions.isAsset) {
+      // XXX it would be great to print a warning here, see the issue:
+      // https://github.com/meteor/meteor/issues/5495
+      this._addFiles("assets", paths, arch);
+      return;
+    }
+
+    // Watch out - we rely on the levels of stack traces inside this
+    // function so don't wrap it in another function without changing that logic
+    this._addFiles("sources", paths, arch, fileOptions);
+  },
+
+  /**
+   * @memberOf PackageAPI
+   * @instance
+   * @summary Specify asset files for your package. They can be accessed via
+   * the [Assets API](#assets) from the server, or at the URL
+   * `/packages/username_package-name/file-name` from the client, depending on the
+   * architecture passed.
+   * @locus package.js
+   * @param {String|String[]} filenames Paths to the asset files.
+   * @param {String|String[]} architecture Specify where this asset should be
+   * available (e.g., 'server', 'client', 'web.browser', 'web.cordova'). You can
+   * specify multiple architectures by passing in an array, for example
+   * `['web.cordova', 'os.linux']`.
+   */
+  addAssets(paths, arch) {
+    if(!arch) {
+      buildmessage.error('addAssets requires a second argument specifying ' +
+        'where the asset should be available. For example: "client", ' +
+        '"server", or ["client", "server"].', { useMyCaller: true });
+      return;
+    }
+
+    // Watch out - we rely on the levels of stack traces inside this
+    // function so don't wrap it in another function without changing that logic
+    this._addFiles("assets", paths, arch);
+  },
+
+  /**
+   * Internal method used by addFiles and addAssets.
+   */
+  _addFiles(type, paths, arch, fileOptions) {
+    if (type !== "sources" && type !== "assets") {
+      throw new Error(`Can only handle sources and assets, not '${type}'.`);
+    }
+
     var self = this;
 
     paths = toArray(paths);
@@ -334,22 +391,38 @@ _.extend(PackageAPI.prototype, {
     var errors = [];
     _.each(paths, function (path) {
       forAllMatchingArchs(arch, function (a) {
-        if (_.has(self.sources[a], path)) {
-          errors.push("Duplicate source file: " + path);
+        const filesOfType = self.files[a][type];
+
+        // Check if we have already added a file at this path
+        if (_.has(filesOfType, path)) {
+          // We want the singular form of the file type
+          const typeName = {
+            sources: 'source',
+            assets: 'asset'
+          }[type];
+
+          errors.push(`Duplicate ${typeName} file: ${path}`);
           return;
         }
-        var source = {relPath: path};
-        if (fileOptions)
+
+        const source = {
+          relPath: path
+        };
+
+        if (fileOptions) {
           source.fileOptions = fileOptions;
-        self.sources[a][path] = source;
+        }
+
+        filesOfType.push(source);
       });
     });
 
     // Spit out all the errors at the end, where the number of stack frames to
-    // skip is just 1 instead of something like 7 from forAllMatchingArchs and
-    // _.each.  Avoid using _.each here to keep stack predictable.
+    // skip is just 2 (this function and its callers) instead of something like
+    // 7 from forAllMatchingArchs and _.each.  Avoid using _.each here to keep
+    // stack predictable.
     for (var i = 0; i < errors.length; ++i) {
-      buildmessage.error(errors[i], { useMyCaller: true });
+      buildmessage.error(errors[i], { useMyCaller: 1 });
     }
   },
 
@@ -438,7 +511,7 @@ _.extend(PackageAPI.prototype, {
    * variables (declared without `var` in the source code) will be available
    * to packages that use your package. If your package sets the `debugOnly`
    * or `prodOnly` options to `true` when it calls `Package.describe()`, then
-   * packages that use your package will need to use 
+   * packages that use your package will need to use
    * `Package["package-name"].ExportedVariableName` to access the value of an
    * exported variable.
    * @locus package.js

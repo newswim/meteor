@@ -179,12 +179,12 @@ if (Meteor.isServer) {
         update: function(userId, doc) {
           // throw fields in doc so that we can inspect them in test
           throw new Meteor.Error(
-            999, "Test: Fields in doc: " + _.keys(doc).join(','));
+            999, "Test: Fields in doc: " + _.keys(doc).sort().join(','));
         },
         remove: function(userId, doc) {
           // throw fields in doc so that we can inspect them in test
           throw new Meteor.Error(
-            999, "Test: Fields in doc: " + _.keys(doc).join(','));
+            999, "Test: Fields in doc: " + _.keys(doc).sort().join(','));
         },
         fetch: ['field1']
       });
@@ -202,12 +202,12 @@ if (Meteor.isServer) {
         update: function(userId, doc) {
           // throw fields in doc so that we can inspect them in test
           throw new Meteor.Error(
-            999, "Test: Fields in doc: " + _.keys(doc).join(','));
+            999, "Test: Fields in doc: " + _.keys(doc).sort().join(','));
         },
         remove: function(userId, doc) {
           // throw fields in doc so that we can inspect them in test
           throw new Meteor.Error(
-            999, "Test: Fields in doc: " + _.keys(doc).join(','));
+            999, "Test: Fields in doc: " + _.keys(doc).sort().join(','));
         },
         fetch: ['field1']
       });
@@ -818,6 +818,28 @@ if (Meteor.isServer) {
     _.each(['insert', 'update', 'remove', 'fetch'], function (key) {
       var options = {};
       options[key] = true;
+      test.throws(function () {
+        collection.allow(options);
+      });
+      test.throws(function () {
+        collection.deny(options);
+      });
+    });
+
+    _.each(['insert', 'update', 'remove'], function (key) {
+      var options = {};
+      options[key] = false;
+      test.throws(function () {
+        collection.allow(options);
+      });
+      test.throws(function () {
+        collection.deny(options);
+      });
+    });
+
+    _.each(['insert', 'update', 'remove'], function (key) {
+      var options = {};
+      options[key] = undefined;
       test.throws(function () {
         collection.allow(options);
       });

@@ -1,6 +1,4 @@
 const _ = require('underscore');
-const Fiber = require('fibers');
-const Future = require('fibers/future');
 
 const files = require('../fs/files.js');
 const buildmessage = require('../utils/buildmessage.js');
@@ -121,7 +119,8 @@ class Runner {
       runLog.log("Started proxy.",  { arrow: true });
     }
 
-    self._startMongoAsync();
+    var unblockAppRunner = self.appRunner.makeBeforeStartPromise();
+    self._startMongoAsync().then(unblockAppRunner);
 
     if (! self.stopped) {
       self.updater.start();
@@ -131,8 +130,9 @@ class Runner {
       buildmessage.enterJob({ title: "starting your app" }, function () {
         self.appRunner.start();
       });
-      if (! self.quiet && ! self.stopped)
+      if (! self.quiet && ! self.stopped) {
         runLog.log("Started your app.",  { arrow: true });
+      }
     }
 
     if (! self.stopped && ! self.quiet) {
@@ -149,8 +149,9 @@ class Runner {
       buildmessage.enterJob({ title: "starting Selenium" }, function () {
         self.selenium.start();
       });
-      if (! self.quiet && ! self.stopped)
+      if (! self.quiet && ! self.stopped) {
         runLog.log("Started Selenium.", { arrow: true });
+      }
     }
 
     // XXX It'd be nice to (cosmetically) handle failure better. Right
@@ -159,29 +160,21 @@ class Runner {
     // foo" and then print the error.
   }
 
-  _startMongoAsync() {
-    const self = this;
-    if (! self.stopped && self.mongoRunner) {
-      const future = new Future;
-      self.appRunner.awaitFutureBeforeStart(future);
-      Fiber(function () {
-        self.mongoRunner.start();
-        if (! self.stopped && ! self.quiet) {
-          runLog.log("Started MongoDB.",  { arrow: true });
-        }
-        // This future might also get resolved by appRunner.stop, so we need
-        // this check here (which is why we can't use f.future(), which does not
-        // have this check).
-        future.isResolved() || future.return();
-      }).run();
+  async _startMongoAsync() {
+    if (! this.stopped && this.mongoRunner) {
+      this.mongoRunner.start();
+      if (! this.stopped && ! this.quiet) {
+        runLog.log("Started MongoDB.", { arrow: true });
+      }
     }
   }
 
   // Idempotent
   stop() {
     const self = this;
-    if (self.stopped)
+    if (self.stopped) {
       return;
+    }
 
     self.stopped = true;
     self.proxy.stop();
@@ -206,10 +199,12 @@ class Runner {
     } else {
       self.appPort = require('../utils/utils.js').randomPort();
     }
-    if (self.proxy)
+    if (self.proxy) {
       self.proxy.proxyToPort = self.appPort;
-    if (self.appRunner)
+    }
+    if (self.appRunner) {
       self.appRunner.port = self.appPort;
+    }
   }
 }
 
@@ -259,19 +254,18 @@ exports.run = function (options) {
   var once = runOptions.once;
   delete runOptions.once;
 
-  var fut = new Future;
-
-  _.extend(runOptions, {
-    onFailure: function () {
+  var promise = new Promise(function (resolve) {
+    runOptions.onFailure = function () {
       // Ensure that runner stops now. You might think this is unnecessary
-      // because the runner is stopped immediately after `fut.wait()`, but if
+      // because the runner is stopped immediately after promise.await(), but if
       // the failure happens while runner.start() is still running, we want the
-      // rest of start to stop, and it's not like fut['return'] magically makes
-      // us jump to a fut.wait() that hasn't happened yet!.
+      // rest of start to stop, and it's not like resolve() magically makes
+      // us jump to a promise.await() that hasn't happened yet!.
       runner.stop();
-      fut.isResolved() || fut['return']({ outcome: 'failure' });
-    },
-    onRunEnd: function (result) {
+      resolve({ outcome: 'failure' });
+    };
+
+    runOptions.onRunEnd = function (result) {
       if (once ||
           result.outcome === "conflicting-versions" ||
           result.outcome === "wrong-release" ||
@@ -279,23 +273,20 @@ exports.run = function (options) {
           result.outcome === "outdated-cordova-plugins" ||
           (result.outcome === "terminated" &&
            result.signal === undefined && result.code === undefined)) {
-        // Allow run() to continue (and call runner.stop()) only once the
-        // AppRunner has processed our "return false"; otherwise we deadlock.
-        process.nextTick(function () {
-          fut.isResolved() || fut['return'](result);
-        });
+        resolve(result);
         return false;  // stop restarting
       }
       runner.regenerateAppPort();
       return true;  // restart it
-    },
-    watchForChanges: ! once,
-    quiet: once
+    };
   });
+
+  runOptions.watchForChanges = ! once;
+  runOptions.quiet = once;
 
   var runner = new Runner(runOptions);
   runner.start();
-  var result = fut.wait();
+  var result = promise.await();
   runner.stop();
 
   if (result.outcome === "conflicting-versions") {
@@ -321,10 +312,11 @@ exports.run = function (options) {
   }
 
   if (result.outcome === "wrong-release") {
-    if (once)
+    if (once) {
       // We lost a race where the user ran 'meteor update' and 'meteor
       // run --once' simultaneously.
       throw new Error("wrong release?");
+    }
 
     // If the user did not specify a --release on the command line,
     // and simultaneously runs `meteor update` during this run, just

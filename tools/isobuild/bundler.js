@@ -150,7 +150,6 @@
 
 var util = require('util');
 var Fiber = require('fibers');
-var Future = require('fibers/future');
 var _ = require('underscore');
 
 var compiler = require('./compiler.js');
@@ -177,8 +176,9 @@ exports.ignoreFiles = [
 ];
 
 var rejectBadPath = function (p) {
-  if (p.match(/\.\./))
+  if (p.match(/\.\./)) {
     throw new Error("bad path: " + p);
+  }
 };
 
 var stripLeadingSlash = function (p) {
@@ -223,6 +223,9 @@ var NodeModulesDirectory = function (options) {
 
   // Optionally, files to discard.
   self.npmDiscards = options.npmDiscards;
+
+  // Write a package.json file instead of copying the full directory.
+  self.writePackageJSON = !!options.writePackageJSON;
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -238,10 +241,12 @@ var NodeModulesDirectory = function (options) {
 // - cacheable
 class File {
   constructor (options) {
-    if (options.data && ! (options.data instanceof Buffer))
+    if (options.data && ! (options.data instanceof Buffer)) {
       throw new Error('File contents must be provided as a Buffer');
-    if (! options.sourcePath && ! options.data)
+    }
+    if (! options.sourcePath && ! options.data) {
       throw new Error("Must provide either sourcePath or data");
+    }
 
     // The absolute path in the filesystem from which we loaded (or will
     // load) this file (null if the file does not correspond to one on
@@ -302,17 +307,18 @@ class File {
     if (! this._contents) {
       if (! this.sourcePath) {
         throw new Error("Have neither contents nor sourcePath for file");
-      }
-      else
+      } else {
         this._contents = files.readFile(this.sourcePath);
+      }
     }
 
     return encoding ? this._contents.toString(encoding) : this._contents;
   }
 
   setContents(b) {
-    if (!(b instanceof Buffer))
+    if (!(b instanceof Buffer)) {
       throw new Error("Must set contents to a Buffer");
+    }
     this._contents = b;
     // Un-cache hash.
     this._hash = null;
@@ -337,13 +343,17 @@ class File {
 
   // Append "?<hash>" to the URL and mark the file as cacheable.
   addCacheBuster() {
-    if (! this.url)
+    if (! this.url) {
       throw new Error("File must have a URL");
-    if (this.cacheable)
-      return; // eg, already got setUrlToHash
-    if (/\?/.test(this.url))
+    }
+    if (this.cacheable) {
+      // eg, already got setUrlToHash
+      return;
+    }
+    if (/\?/.test(this.url)) {
       throw new Error("URL already has a query string");
-    this.url += "?" + this.hash();
+    }
+    this.url += "?hash=" + this.hash();
     this.cacheable = true;
   }
 
@@ -354,8 +364,9 @@ class File {
   setUrlFromRelPath(relPath) {
     var url = relPath;
 
-    if (url.charAt(0) !== '/')
+    if (url.charAt(0) !== '/') {
       url = '/' + url;
+    }
 
     // XXX replacing colons with underscores as colon is hard to escape later
     // on different targets and generally is not a good separator for web.
@@ -365,10 +376,11 @@ class File {
 
   setTargetPathFromRelPath(relPath) {
     // XXX hack
-    if (relPath.match(/^packages\//) || relPath.match(/^assets\//))
+    if (relPath.match(/^packages\//) || relPath.match(/^assets\//)) {
       this.targetPath = relPath;
-    else
+    } else {
       this.targetPath = files.pathJoin('app', relPath);
+    }
 
     // XXX same as in setUrlFromRelPath, we replace colons with a different
     // separator to avoid difficulties further. E.g.: on Windows it is not a
@@ -392,8 +404,9 @@ class File {
 
   // note: this assets object may be shared among multiple files!
   setAssets(assets) {
-    if (!_.isEmpty(assets))
+    if (!_.isEmpty(assets)) {
       this.assets = assets;
+    }
   }
 }
 
@@ -415,7 +428,9 @@ class Target {
     //  and prodOnly packages are included; defaults to 'production'
     buildMode,
     // directory on disk where to store the cache for things like linker
-    bundlerCacheDir
+    bundlerCacheDir,
+    // whether to substitute a package.json for unavailable binary deps
+    providePackageJSONForUnavailableBinaryDeps,
     // ... see subclasses for additional options
   }) {
     this.packageMap = packageMap;
@@ -462,6 +477,9 @@ class Target {
     this.buildMode = buildMode || 'production';
 
     this.bundlerCacheDir = bundlerCacheDir;
+
+    this.providePackageJSONForUnavailableBinaryDeps
+      = providePackageJSONForUnavailableBinaryDeps;
   }
 
   // Top-level entry point for building a target. Generally to build a
@@ -561,12 +579,15 @@ class Target {
         if (p.prodOnly && this.buildMode !== 'production') {
           return;
         }
-        const unibuild = p.getUnibuildAtArch(this.arch);
+        const unibuild = p.getUnibuildAtArch(this.arch, {
+          allowWrongPlatform: this.providePackageJSONForUnavailableBinaryDeps
+        });
         unibuild && rootUnibuilds.push(unibuild);
       });
 
-      if (buildmessage.jobHasMessages())
+      if (buildmessage.jobHasMessages()) {
         return;
+      }
 
       // PHASE 1: Which unibuilds will be used?
       //
@@ -580,8 +601,9 @@ class Target {
       const usedUnibuilds = {};  // Map from unibuild.id to Unibuild.
       this.usedPackages = {};  // Map from package name to true;
       const addToGetsUsed = function (unibuild) {
-        if (_.has(usedUnibuilds, unibuild.id))
+        if (_.has(usedUnibuilds, unibuild.id)) {
           return;
+        }
         usedUnibuilds[unibuild.id] = unibuild;
         if (unibuild.kind === 'main') {
           // Only track real packages, not plugin pseudo-packages.
@@ -592,14 +614,16 @@ class Target {
           arch: this.arch,
           isopackCache: isopackCache,
           skipDebugOnly: this.buildMode !== 'development',
-          skipProdOnly: this.buildMode !== 'production'
+          skipProdOnly: this.buildMode !== 'production',
+          allowWrongPlatform: this.providePackageJSONForUnavailableBinaryDeps,
         }, addToGetsUsed);
       }.bind(this);
 
       rootUnibuilds.forEach(addToGetsUsed);
 
-      if (buildmessage.jobHasMessages())
+      if (buildmessage.jobHasMessages()) {
         return;
+      }
 
       // PHASE 2: In what order should we load the unibuilds?
       //
@@ -624,8 +648,9 @@ class Target {
       // this.unibuilds, then adds unibuild itself.
       const add = function (unibuild) {
         // If this has already been added, there's nothing to do.
-        if (!_.has(needed, unibuild.id))
+        if (!_.has(needed, unibuild.id)) {
           return;
+        }
 
         // Process each ordered dependency. (If we have an unordered dependency
         // `u`, then there's no reason to add it *now*, and for all we know, `u`
@@ -657,6 +682,7 @@ class Target {
           acceptableWeakPackages: this.usedPackages,
           skipDebugOnly: this.buildMode !== 'development',
           skipProdOnly: this.buildMode !== 'production',
+          allowWrongPlatform: this.providePackageJSONForUnavailableBinaryDeps,
         }, processUnibuild);
         this.unibuilds.push(unibuild);
         delete needed[unibuild.id];
@@ -666,9 +692,12 @@ class Target {
         // Get an arbitrary unibuild from those that remain, or break if none
         // remain.
         let first = null;
-        for (first in needed) break;
-        if (! first)
+        for (first in needed) {
           break;
+        }
+        if (! first) {
+          break;
+        }
         // Now add it, after its ordered dependencies.
         add(needed[first]);
       }
@@ -721,8 +750,9 @@ class Target {
       // resource (for os unibuilds).
       const unibuildAssets = {};
       resources.forEach((resource) => {
-        if (resource.type !== 'asset')
+        if (resource.type !== 'asset') {
           return;
+        }
 
         const f = new File({
           info: 'unbuild ' + resource,
@@ -747,11 +777,13 @@ class Target {
 
       // Now look for the other kinds of resources.
       resources.forEach((resource) => {
-        if (resource.type === 'asset')
-          return;  // already handled
+        if (resource.type === 'asset') {
+          // already handled
+          return;
+        }
 
         if (_.contains(['js', 'css'], resource.type)) {
-          if (resource.type === 'css' && ! isWeb)
+          if (resource.type === 'css' && ! isWeb) {
             // XXX might be nice to throw an error here, but then we'd
             // have to make it so that package.js ignores css files
             // that appear in the server directories in an app tree
@@ -759,6 +791,7 @@ class Target {
             // XXX XXX can't we easily do that in the css handler in
             // meteor.js?
             return;
+          }
 
           const f = new File({ info: 'resource ' + resource.servePath, data: resource.data, cacheable: false});
 
@@ -771,8 +804,9 @@ class Target {
 
           if (resource.type === 'js' && isOs) {
             // Hack, but otherwise we'll end up putting app assets on this file.
-            if (resource.servePath !== '/packages/global-imports.js')
+            if (resource.servePath !== '/packages/global-imports.js') {
               f.setAssets(unibuildAssets);
+            }
 
             if (! isApp && unibuild.nodeModulesPath) {
               var nmd = this.nodeModulesDirectories[unibuild.nodeModulesPath];
@@ -792,6 +826,33 @@ class Target {
                 this.nodeModulesDirectories[unibuild.nodeModulesPath] = nmd;
               }
               f.nodeModulesDirectory = nmd;
+
+              if (!archinfo.matches(this.arch, unibuild.arch)) {
+                // The unibuild we're trying to include doesn't work for the
+                // bundle target (eg, os.osx.x86_64 instead of os.linux.x86_64)!
+                // Hopefully this is because we specially enabled the feature
+                // that leads to this.
+                if (!this.providePackageJSONForUnavailableBinaryDeps) {
+                  throw Error("mismatched arch without special feature enabled "
+                              + unibuild.pkg.name + " / " + this.arch + " / " +
+                              unibuild.arch);
+                }
+                if (!files.exists(
+                  files.pathJoin(nmd.sourcePath, '.package.json'))) {
+                  buildmessage.error(
+                    "Can't cross-compile package " +
+                      unibuild.pkg.name + ": missing .package.json");
+                  return;
+                }
+                if (!files.exists(
+                  files.pathJoin(nmd.sourcePath, '.npm-shrinkwrap.json'))) {
+                  buildmessage.error(
+                    "Can't cross-compile package " +
+                      unibuild.pkg.name + ": missing .npm-shrinkwrap.json");
+                  return;
+                }
+                nmd.writePackageJSON = true;
+              }
             }
           }
 
@@ -810,8 +871,9 @@ class Target {
         }
 
         if (_.contains(['head', 'body'], resource.type)) {
-          if (! isWeb)
+          if (! isWeb) {
             throw new Error('HTML segments can only go to the client');
+          }
           this[resource.type].push(resource.data);
           return;
         }
@@ -881,7 +943,9 @@ class Target {
       sm.sources = sm.sources.map(function (path) {
         const prefix =  'meteor://\u{1f4bb}app';
 
-        if (path.slice(0, prefix.length) === prefix) return path;
+        if (path.slice(0, prefix.length) === prefix) {
+          return path;
+        }
         // This emoji makes sure the category is always last. The character
         // is PERSONAL COMPUTER (yay ES6 unicode escapes):
         // http://www.fileformat.info/info/unicode/char/1f4bb/index.htm
@@ -892,15 +956,17 @@ class Target {
 
     if (this.js) {
       this.js.forEach(function (js) {
-        if (js.sourceMap)
+        if (js.sourceMap) {
           js.sourceMap = rewriteSourceMap(js.sourceMap);
+        }
       });
     }
 
     if (this.css) {
       this.css.forEach(function (css) {
-        if (css.sourceMap)
+        if (css.sourceMap) {
           css.sourceMap = rewriteSourceMap(css.sourceMap);
+        }
       });
     }
   }
@@ -911,8 +977,9 @@ class Target {
   // we always add the exact version specified, overriding any other
   // version that has already been added.
   _addCordovaDependency(name, version, override) {
-    if (! this.cordovaDependencies)
+    if (! this.cordovaDependencies) {
       return;
+    }
 
     if (override) {
       this.cordovaDependencies[name] = version;
@@ -935,8 +1002,9 @@ class Target {
   // XXX The versions of these direct dependencies override any versions
   // of the same plugins that packages are using.
   _addDirectCordovaDependencies() {
-    if (! this.cordovaDependencies)
+    if (! this.cordovaDependencies) {
       return;
+    }
 
     _.each(this.cordovaPluginsFile.getPluginVersions(), (version, name) => {
       this._addCordovaDependency(
@@ -964,7 +1032,14 @@ class Target {
   // including anything that was specific to Linux, the return value
   // would be 'os'.
   mostCompatibleArch() {
-    return archinfo.leastSpecificDescription(_.pluck(this.unibuilds, 'arch'));
+    let arches = _.pluck(this.unibuilds, 'arch');
+    if (this.providePackageJSONForUnavailableBinaryDeps) {
+      // Filter out incompatible arches.
+      arches = arches.filter(
+        (arch) => archinfo.matches(this.arch, arch)
+      );
+    }
+    return archinfo.leastSpecificDescription(arches);
   }
 }
 
@@ -992,8 +1067,9 @@ class ClientTarget extends Target {
     this.head = [];
     this.body = [];
 
-    if (! archinfo.matches(this.arch, 'web'))
+    if (! archinfo.matches(this.arch, 'web')) {
       throw new Error('ClientTarget targeting something that isn\'t a client?');
+    }
   }
 
   // Minify the CSS in this target
@@ -1068,8 +1144,6 @@ class ClientTarget extends Target {
     // Build up a manifest of all resources served via HTTP.
     const manifest = [];
     eachResource((file, type) => {
-      const fileContents = file.contents();
-
       const manifestItem = {
         path: file.targetPath,
         where: "client",
@@ -1197,6 +1271,8 @@ class JsImage {
 
     // Architecture required by this image
     this.arch = null;
+
+    this.providePackageJSONForUnavailableBinaryDeps = false;
   }
 
   // Load the image into the current process. It gets its own unique
@@ -1221,18 +1297,25 @@ class JsImage {
     // Some way to avoid this?
     var getAsset = function (assets, assetPath, encoding, callback) {
       assetPath = files.convertToStandardPath(assetPath);
-      var fut;
+      var promise;
       if (! callback) {
-        if (! Fiber.current)
+        if (! Fiber.current) {
           throw new Error("The synchronous Assets API can " +
                           "only be called from within a Fiber.");
-        fut = new Future();
-        callback = fut.resolver();
+        }
+
+        promise = new Promise(function (resolve, reject) {
+          callback = function (err, res) {
+            err ? reject(err) : resolve(res);
+          };
+        });
       }
+
       var _callback = function (err, result) {
-        if (result && ! encoding)
+        if (result && ! encoding) {
           // Sadly, this copies in Node 0.10.
           result = new Uint8Array(result);
+        }
         callback(err, result);
       };
 
@@ -1243,8 +1326,10 @@ class JsImage {
         var result = encoding ? buffer.toString(encoding) : buffer;
         _callback(null, result);
       }
-      if (fut)
-        return fut.wait();
+
+      if (promise) {
+        return promise.await();
+      }
     };
 
     // Eval each JavaScript file, providing a 'Npm' symbol in the same
@@ -1254,8 +1339,9 @@ class JsImage {
     // static assets.
     var failed = false;
     _.each(self.jsToLoad, function (item) {
-      if (failed)
+      if (failed) {
         return;
+      }
 
       var env = _.extend({
         Package: ret,
@@ -1387,7 +1473,8 @@ class JsImage {
       nodeModulesDirectories.push(new NodeModulesDirectory({
         sourcePath: nmd.sourcePath,
         preferredBundlePath: modulesPhysicalLocation,
-        npmDiscards: nmd.npmDiscards
+        npmDiscards: nmd.npmDiscards,
+        writePackageJSON: nmd.writePackageJSON
       }));
     });
 
@@ -1398,8 +1485,9 @@ class JsImage {
     // JavaScript sources
     var load = [];
     _.each(self.jsToLoad, function (item) {
-      if (! item.targetPath)
+      if (! item.targetPath) {
         throw new Error("No targetPath?");
+      }
 
       var loadItem = {};
 
@@ -1434,8 +1522,9 @@ class JsImage {
         item.source = item.source.replace(
             /\n\/\/# sourceMappingURL=.+\n?$/g, '');
         item.source += "\n//# sourceMappingURL=" + sourceMapFileName + "\n";
-        if (item.sourceMapRoot)
+        if (item.sourceMapRoot) {
           loadItem.sourceMapRoot = item.sourceMapRoot;
+        }
       }
 
       loadItem.path = builder.writeToGeneratedFilename(
@@ -1472,13 +1561,36 @@ class JsImage {
       load.push(loadItem);
     });
 
+    const setupScriptPieces = [];
     // node_modules resources from the packages. Due to appropriate
     // builder configuration, 'meteor bundle' and 'meteor deploy' copy
     // them, and 'meteor run' symlinks them. If these contain
     // arch-specific code then the target will end up having an
     // appropriately specific arch.
     _.each(nodeModulesDirectories, function (nmd) {
-      if (nmd.sourcePath !== nmd.preferredBundlePath) {
+      if (nmd.writePackageJSON) {
+        // Make sure there's an empty node_modules directory at the right place
+        // in the tree (so that npm install puts modules there instead of
+        // elsewhere).
+        builder.reserve(
+          nmd.preferredBundlePath, {directory: true});
+        // We check that these source files exist in _emitResources when
+        // writePackageJSON is initially set.
+        builder.write(
+          files.pathJoin(files.pathDirname(nmd.preferredBundlePath),
+                         'package.json'),
+          { file: files.pathJoin(nmd.sourcePath, '.package.json') }
+        );
+        builder.write(
+          files.pathJoin(files.pathDirname(nmd.preferredBundlePath),
+                         'npm-shrinkwrap.json'),
+          { file: files.pathJoin(nmd.sourcePath, '.npm-shrinkwrap.json') }
+        );
+        // XXX does not support npmDiscards!
+
+        setupScriptPieces.push(
+          '(cd ', nmd.preferredBundlePath, ' && npm install)\n\n');
+      } else if (nmd.sourcePath !== nmd.preferredBundlePath) {
         builder.copyDirectory({
           from: nmd.sourcePath,
           to: nmd.preferredBundlePath,
@@ -1487,6 +1599,14 @@ class JsImage {
         });
       }
     });
+
+    if (setupScriptPieces.length) {
+      setupScriptPieces.unshift('#!/usr/bin/env bash\n', 'set -e\n\n');
+      builder.write('setup.sh', {
+        data: new Buffer(setupScriptPieces.join(''), 'utf8'),
+        executable: true
+      });
+    }
 
     // Control file
     builder.writeJson('program.json', {
@@ -1509,9 +1629,10 @@ class JsImage {
     var json = JSON.parse(files.readFile(controlFilePath));
     var dir = files.pathDirname(controlFilePath);
 
-    if (json.format !== "javascript-image-pre1")
+    if (json.format !== "javascript-image-pre1") {
       throw new Error("Unsupported plugin format: " +
                       JSON.stringify(json.format));
+    }
 
     ret.arch = json.arch;
 
@@ -1574,10 +1695,11 @@ class JsImageTarget extends Target {
   constructor(options) {
     super(options);
 
-    if (! archinfo.matches(this.arch, "os"))
+    if (! archinfo.matches(this.arch, "os")) {
       // Conceivably we could support targeting the client as long as
       // no native node modules were used.  No use case for that though.
       throw new Error("JsImageTarget targeting something unusual?");
+    }
   }
 
   toJsImage() {
@@ -1615,8 +1737,9 @@ class ServerTarget extends JsImageTarget {
     this.clientTargets = options.clientTargets;
     this.releaseName = options.releaseName;
 
-    if (! archinfo.matches(this.arch, "os"))
+    if (! archinfo.matches(this.arch, "os")) {
       throw new Error("ServerTarget targeting something that isn't a server?");
+    }
   }
 
   // Output the finished target to disk
@@ -1738,11 +1861,13 @@ class ServerTarget extends JsImageTarget {
 });
 
 var writeFile = Profile("bundler..writeFile", function (file, builder) {
-  if (! file.targetPath)
+  if (! file.targetPath) {
     throw new Error("No targetPath?");
+  }
   var contents = file.contents();
-  if (! (contents instanceof Buffer))
+  if (! (contents instanceof Buffer)) {
     throw new Error("contents not a Buffer?");
+  }
   // XXX should probably use sanitize: true, but that will have
   // to wait until the server is actually driven by the manifest
   // (rather than just serving all of the files in a certain
@@ -2010,7 +2135,8 @@ exports.bundle = function ({
   includeNodeModules,
   buildOptions,
   previousBuilders,
-  hasCachedBundle
+  hasCachedBundle,
+  providePackageJSONForUnavailableBinaryDeps
 }) {
   buildOptions = buildOptions || {};
 
@@ -2037,8 +2163,9 @@ exports.bundle = function ({
   const bundlerCacheDir =
       projectContext.getProjectLocalDirectory('bundler-cache');
 
-  if (! release.usingRightReleaseForApp(projectContext))
+  if (! release.usingRightReleaseForApp(projectContext)) {
     throw new Error("running wrong release for app?");
+  }
 
   if (! _.contains(['development', 'production'], buildMode)) {
     throw new Error('Unrecognized build mode: ' + buildMode);
@@ -2077,10 +2204,12 @@ exports.bundle = function ({
         isopackCache: projectContext.isopackCache,
         arch: serverArch,
         releaseName: releaseName,
-        buildMode: buildOptions.buildMode
+        buildMode: buildOptions.buildMode,
+        providePackageJSONForUnavailableBinaryDeps
       };
-      if (clientTargets)
+      if (clientTargets) {
         targetOptions.clientTargets = clientTargets;
+      }
 
       var server = new ServerTarget(targetOptions);
 
@@ -2101,13 +2230,23 @@ exports.bundle = function ({
       isopackCache: projectContext.isopackCache,
       includeCordovaUnibuild: projectContext.platformList.usesCordova()
     });
+
+    const mergeAppWatchSets = () => {
+      var projectAndLocalPackagesWatchSet =
+        projectContext.getProjectAndLocalPackagesWatchSet();
+
+      clientWatchSet.merge(projectAndLocalPackagesWatchSet);
+      clientWatchSet.merge(app.getClientWatchSet());
+
+      serverWatchSet.merge(projectAndLocalPackagesWatchSet);
+      serverWatchSet.merge(app.getServerWatchSet());
+    };
+
     // If we failed to 'compile' the app (which mostly means something odd
     // happened like clashing extension handlers, or a legacy source handler
     // failed), restart on any relevant change, and be done.
     if (buildmessage.jobHasMessages()) {
-      serverWatchSet.merge(projectContext.getProjectAndLocalPackagesWatchSet());
-      serverWatchSet.merge(app.getMergedWatchSet());
-      return;
+      return mergeAppWatchSets();
     }
 
     if (! buildmessage.jobHasMessages()) {
@@ -2117,9 +2256,7 @@ exports.bundle = function ({
     // plugins in one of the linter packages), restart on any relevant change,
     // and be done.
     if (buildmessage.jobHasMessages()) {
-      serverWatchSet.merge(projectContext.getProjectAndLocalPackagesWatchSet());
-      serverWatchSet.merge(app.getMergedWatchSet());
-      return;
+      return mergeAppWatchSets();
     }
 
     var minifiers = null;
@@ -2133,9 +2270,7 @@ exports.bundle = function ({
     // If figuring out what the minifiers are failed (eg, clashing extension
     // handlers), restart on any relevant change, and be done.
     if (buildmessage.jobHasMessages()) {
-      serverWatchSet.merge(projectContext.getProjectAndLocalPackagesWatchSet());
-      serverWatchSet.merge(app.getMergedWatchSet());
-      return;
+      return mergeAppWatchSets();
     }
 
     var clientTargets = [];
@@ -2159,11 +2294,13 @@ exports.bundle = function ({
       var pathForTarget = function (target) {
         var name;
         _.each(targets, function (t, n) {
-          if (t === target)
+          if (t === target) {
             name = n;
+          }
         });
-        if (! name)
+        if (! name) {
           throw new Error("missing target?");
+        }
         return files.pathJoin('programs', name);
       };
 
@@ -2212,8 +2349,10 @@ exports.bundle = function ({
     success = true;
   });
 
-  if (success && messages.hasMessages())
-    success = false; // there were errors
+  if (success && messages.hasMessages()) {
+    // there were errors
+    success = false;
+  }
 
   return {
     errors: success ? false : messages,
@@ -2298,10 +2437,12 @@ function lintBundle (projectContext, isopack, packageSource) {
 // namespace." It should be an easy refactor,
 exports.buildJsImage = Profile("bundler.buildJsImage", function (options) {
   buildmessage.assertInCapture();
-  if (options.npmDependencies && ! options.npmDir)
+  if (options.npmDependencies && ! options.npmDir) {
     throw new Error("Must indicate .npm directory to use");
-  if (! options.name)
+  }
+  if (! options.name) {
     throw new Error("Must provide a name");
+  }
 
   var packageSource = new PackageSource;
 

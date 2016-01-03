@@ -340,6 +340,38 @@ selftest.define("command-like options", function () {
   run.expectExit(0);
 });
 
+selftest.define("rails reminders", function () {
+  var s = new Sandbox;
+  var run;
+
+  run = s.run("server");
+  run.matchErr("Did you mean 'meteor run'?");
+  run.expectExit(1);
+  run = s.run("console");
+  run.matchErr("Did you mean 'meteor shell'?");
+  run.expectExit(1);
+  run = s.run("new");
+  run.matchErr("Did you mean 'meteor create'?");
+  run.expectExit(1);
+  run = s.run("dbconsole");
+  run.matchErr("Did you mean 'meteor mongo'?");
+  run.expectExit(1);
+
+  // It should ignore args
+  run = s.run("server", "ignoredArg");
+  run.matchErr("Did you mean 'meteor run'?");
+  run.expectExit(1);
+  run = s.run("console", "ignoredArg");
+  run.matchErr("Did you mean 'meteor shell'?");
+  run.expectExit(1);
+  run = s.run("new", "ignoredArg");
+  run.matchErr("Did you mean 'meteor create'?");
+  run.expectExit(1);
+  run = s.run("dbconsole", "ignoredArg");
+  run.matchErr("Did you mean 'meteor mongo'?");
+  run.expectExit(1);
+});
+
 selftest.define("old cli tests (converted)", function () {
   var s = new Sandbox;
   var run;
@@ -435,16 +467,7 @@ selftest.define("old cli tests (converted)", function () {
 
   // bundle
   run = s.run('bundle', 'foo.tar.gz');
-  run.expectExit(0);
-
-  // untar the tarball, make sure the tar command succeeds, do it only on linux,
-  // since on windows it requires messing with 7z failures, different behavior
-  // of commands and options, etc
-  if (process.platform !== 'win32') {
-    var tar_tvzf = utils.execFileSync('tar', ['tvzf', files.pathJoin(s.cwd, 'foo.tar.gz')]);
-    selftest.expectTrue(tar_tvzf.success);
-  }
-  files.unlink(files.pathJoin(s.cwd, 'foo.tar.gz'));
+  run.matchErr(/This command has been deprecated/);
 
   run = s.run('build', '.');
   run.expectExit(0);
@@ -501,4 +524,3 @@ selftest.define("old cli tests (converted)", function () {
   run.expectExit(0);
   files.unlink(files.pathJoin(s.cwd, 'settings.js'));
 });
-

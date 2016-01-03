@@ -56,8 +56,6 @@
 /// In addition to printing functions, the Console class provides progress bar
 /// support, that is mostly handled through buildmessage.js.
 var _ = require('underscore');
-var Fiber = require('fibers');
-var Future = require('fibers/future');
 var readline = require('readline');
 var util = require('util');
 var buildmessage = require('../utils/buildmessage.js');
@@ -70,7 +68,7 @@ var wordwrap = require('wordwrap');
 var PROGRESS_DEBUG = !!process.env.METEOR_PROGRESS_DEBUG;
 var FORCE_PRETTY=undefined;
 var CARRIAGE_RETURN =
-  (process.platform === 'win32' ? new Array(249).join('\b') : '\r');
+  (process.platform === 'win32' && process.stdout.isTTY ? new Array(249).join('\b') : '\r');
 
 if (process.env.METEOR_PRETTY_OUTPUT) {
   FORCE_PRETTY = process.env.METEOR_PRETTY_OUTPUT != '0';
@@ -433,18 +431,16 @@ _.extend(StatusPoller.prototype, {
   _startPoller: function () {
     var self = this;
 
-    if (self._pollFiber) {
+    if (self._pollPromise) {
       throw new Error("Already started");
     }
 
-    self._pollFiber = Fiber(function () {
+    self._pollPromise = (async() => {
       while (! self._stop) {
         utils.sleepMs(STATUS_INTERVAL_MS);
-
         self.statusPoll();
       }
-    });
-    self._pollFiber.run();
+    })();
   },
 
   stop: function () {
@@ -584,11 +580,13 @@ _.extend(Console.prototype, {
   setPretty: function (pretty) {
     var self = this;
     // If we're being forced, do nothing.
-    if (FORCE_PRETTY !== undefined)
+    if (FORCE_PRETTY !== undefined) {
       return;
+    }
     // If no change, do nothing.
-    if (self._pretty === pretty)
+    if (self._pretty === pretty) {
       return;
+    }
     self._pretty = pretty;
     self._updateProgressDisplay();
   },
@@ -604,8 +602,9 @@ _.extend(Console.prototype, {
     self._pretty = self._progressDisplayEnabled = true;
 
     // Update the screen if anything changed.
-    if (! originalPretty || ! originalProgressDisplayEnabled)
+    if (! originalPretty || ! originalProgressDisplayEnabled) {
       self._updateProgressDisplay();
+    }
 
     try {
       return f();
@@ -614,8 +613,9 @@ _.extend(Console.prototype, {
       self._pretty = originalPretty;
       self._progressDisplayEnabled = originalProgressDisplayEnabled;
       // Update the screen if anything changed.
-      if (! originalPretty || ! originalProgressDisplayEnabled)
+      if (! originalPretty || ! originalProgressDisplayEnabled) {
         self._updateProgressDisplay();
+      }
     }
   },
 
@@ -640,8 +640,9 @@ _.extend(Console.prototype, {
     // relies on the previous chars to be erasable with '\b' (end-line chars
     // can't be erased this way). This is why we report a smaller number than it
     // is in reality, for safety.
-    if (process.platform === 'win32')
+    if (process.platform === 'win32') {
       width -= 5;
+    }
 
     return width;
   },
@@ -1080,8 +1081,9 @@ _.extend(Console.prototype, {
     var longest = '';
     _.each(rows, function (row) {
       var col0 = row[0] || '';
-      if (col0.length > longest.length)
+      if (col0.length > longest.length) {
         longest = col0;
+      }
     });
 
     var pad = longest.replace(/./g, ' ');
@@ -1149,8 +1151,9 @@ _.extend(Console.prototype, {
         wrappedText = text;
       }
       wrappedText = _.map(wrappedText.split('\n'), function (s) {
-        if (s === "")
+        if (s === "") {
           return "";
+        }
         return indent + s;
       }).join('\n');
 
@@ -1186,8 +1189,9 @@ _.extend(Console.prototype, {
       enabled = true;
     }
 
-    if (self._progressDisplayEnabled === enabled)
+    if (self._progressDisplayEnabled === enabled) {
       return;
+    }
 
     self._progressDisplayEnabled = enabled;
     self._updateProgressDisplay();
@@ -1252,8 +1256,6 @@ _.extend(Console.prototype, {
 Console.prototype.readLine = function (options) {
   var self = this;
 
-  var fut = new Future();
-
   options = _.extend({
     echo: true,
     stream: self._stream
@@ -1290,15 +1292,16 @@ Console.prototype.readLine = function (options) {
     rl.prompt();
   }
 
-  rl.on('line', function (line) {
-    rl.close();
-    if (! options.echo)
-      options.stream.write("\n");
-    self._setProgressDisplay(previousProgressDisplay);
-    fut['return'](line);
-  });
-
-  return fut.wait();
+  return new Promise(function (resolve) {
+    rl.on('line', function (line) {
+      rl.close();
+      if (! options.echo) {
+        options.stream.write("\n");
+      }
+      self._setProgressDisplay(previousProgressDisplay);
+      resolve(line);
+    });
+  }).await();
 };
 
 

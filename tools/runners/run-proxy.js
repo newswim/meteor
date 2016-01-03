@@ -1,5 +1,4 @@
 var _ = require('underscore');
-var Future = require('fibers/future');
 var runLog = require('./run-log.js');
 
 // options: listenPort, proxyToPort, proxyToHost, onFailure
@@ -28,8 +27,9 @@ _.extend(Proxy.prototype, {
   start: function () {
     var self = this;
 
-    if (self.server)
+    if (self.server) {
       throw new Error("already running?");
+    }
 
     self.started = false;
 
@@ -56,7 +56,11 @@ _.extend(Proxy.prototype, {
       self._tryHandleConnections();
     });
 
-    var fut = new Future;
+    var allowStart;
+    var promise = new Promise(function (resolve) {
+      allowStart = resolve;
+    });
+
     self.server.on('error', function (err) {
       if (err.code === 'EADDRINUSE') {
         var port = self.listenPort;
@@ -79,8 +83,7 @@ _.extend(Proxy.prototype, {
         runLog.log('' + err);
       }
       self.onFailure();
-      // Allow start() to return.
-      fut.isResolved() || fut['return']();
+      allowStart();
     });
 
     // Don't crash if the app doesn't respond. instead return an error
@@ -117,18 +120,19 @@ _.extend(Proxy.prototype, {
         // necessary.
         server.close();
       }
-      fut.isResolved() || fut['return']();
+      allowStart();
     });
 
-    fut.wait();
+    promise.await();
   },
 
   // Idempotent.
   stop: function () {
     var self = this;
 
-    if (! self.server)
+    if (! self.server) {
       return;
+    }
 
     if (! self.started) {
       // This probably means that we failed to listen. However, there could be a
@@ -167,21 +171,13 @@ _.extend(Proxy.prototype, {
     var self = this;
 
     while (self.httpQueue.length) {
-      if (self.mode !== "errorpage" && self.mode !== "proxy")
+      if (self.mode !== "errorpage" && self.mode !== "proxy") {
         break;
+      }
 
       var c = self.httpQueue.shift();
       if (self.mode === "errorpage") {
-        // XXX serve an app that shows the logs nicely and that also
-        // knows how to reload when the server comes back up
-        c.res.writeHead(200, {'Content-Type': 'text/plain'});
-        c.res.write("Your app is crashing. Here's the latest log.\n\n");
-
-        _.each(runLog.getLog(), function (item) {
-          c.res.write(item.message + "\n");
-        });
-
-        c.res.end();
+        showErrorPage(c.res);
       } else {
         self.proxy.web(c.req, c.res, {
           target: 'http://' + self.proxyToHost + ':' + self.proxyToPort
@@ -190,8 +186,9 @@ _.extend(Proxy.prototype, {
     }
 
     while (self.websocketQueue.length) {
-      if (self.mode !== "proxy")
+      if (self.mode !== "proxy") {
         break;
+      }
 
       var c = self.websocketQueue.shift();
       self.proxy.ws(c.req, c.socket, c.head, {
@@ -213,5 +210,60 @@ _.extend(Proxy.prototype, {
     self._tryHandleConnections();
   }
 });
+
+function showErrorPage(res) {
+  // XXX serve an app that shows the logs nicely and that also
+  // knows how to reload when the server comes back up
+  res.writeHead(200, {'Content-Type': 'text/html'});
+  res.write(`
+<!DOCTYPE html>
+<html>
+  <head>
+    <title>App crashing</title>
+    <style type='text/css'>
+      body { margin: 0; }
+      h3 {
+        margin: 0;
+        font-family: sans-serif;
+        padding: 20px 10px 10px 10px;
+        background: #eee;
+      }
+      pre { margin: 20px; }
+    </style>
+  </head>
+
+  <body>
+    <h3>Your app is crashing. Here's the latest log:</h3>
+
+    <pre>`);
+
+      _.each(runLog.getLog(), function (item) {
+        res.write(escapeEntities(item.message) + "\n");
+      });
+
+      res.write(`</pre>
+  </body>
+</html>`)
+
+  res.end();
+}
+
+// Copied from packages/blaze/preamble.js
+function escapeEntities(str) {
+  const escapeMap = {
+    "<": "&lt;",
+    ">": "&gt;",
+    '"': "&quot;",
+    "'": "&#x27;",
+    "`": "&#x60;", /* IE allows backtick-delimited attributes?? */
+    "&": "&amp;"
+  };
+
+  const escapeChar = function(c) {
+    return escapeMap[c];
+  };
+
+  return str.replace(/[&<>"'`]/g, escapeChar);
+}
 
 exports.Proxy = Proxy;

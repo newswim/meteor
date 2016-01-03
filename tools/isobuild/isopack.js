@@ -15,8 +15,9 @@ var Console = require('../console/console.js').Console;
 var Profile = require('../tool-env/profile.js').Profile;
 
 var rejectBadPath = function (p) {
-  if (p.match(/\.\./))
+  if (p.match(/\.\./)) {
     throw new Error("bad path: " + p);
+  }
 };
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -239,10 +240,12 @@ Isopack.convertIsopackFormat = Profile(
   var toPos = _.indexOf(Isopack.knownFormats, toFormat);
   var step = fromPos < toPos ? 1 : -1;
 
-  if (fromPos === -1)
+  if (fromPos === -1) {
     throw new Error("Can't convert from unknown Isopack format: " + fromFormat);
-  if (toPos === -1)
+  }
+  if (toPos === -1) {
     throw new Error("Can't convert to unknown Isopack format: " + toFormat);
+  }
 
   while (fromPos !== toPos) {
     if (step > 0) {
@@ -361,8 +364,9 @@ _.extend(Isopack.prototype, {
         anySourceFiles = true;
         var relativePath = files.pathRelative(sourceRoot, filename);
         // We only want files that are actually under sourceRoot.
-        if (relativePath.substr(0, 3) === '..' + files.pathSep)
+        if (relativePath.substr(0, 3) === '..' + files.pathSep) {
           return;
+        }
         sourceFiles[relativePath] = true;
       });
     };
@@ -374,8 +378,9 @@ _.extend(Isopack.prototype, {
     // Were we actually built from source or loaded from an IsopackCache? If so
     // then there should be at least one source file in some WatchSet. If not,
     // return null.
-    if (! anySourceFiles)
+    if (! anySourceFiles) {
       return null;
+    }
     return _.keys(sourceFiles);
   }),
 
@@ -438,11 +443,22 @@ _.extend(Isopack.prototype, {
   // Return the unibuild of the package to use for a given target architecture
   // (eg, 'os.linux.x86_64' or 'web'), or throw an exception if that
   // packages can't be loaded under these circumstances.
-  getUnibuildAtArch: Profile("Isopack#getUnibuildAtArch", function (arch) {
+  getUnibuildAtArch: Profile("Isopack#getUnibuildAtArch", function (
+    arch, {allowWrongPlatform} = {}) {
     var self = this;
 
-    var chosenArch = archinfo.mostSpecificMatch(
+    let chosenArch = archinfo.mostSpecificMatch(
       arch, _.pluck(self.unibuilds, 'arch'));
+    if (! chosenArch && allowWrongPlatform && arch.match(/^os\./)) {
+      // Special-case: we're looking for a specific server platform and it's
+      // not available. (eg, we're deploying from a Mac to Linux and are
+      // processing a local package with binary npm deps).  If we have "allow
+      // wrong platform" turned on, search again for the host version, which
+      // might find the Mac version.  We'll detect this case later and provide
+      // package.json instead of Mac binaries.
+      chosenArch =
+        archinfo.mostSpecificMatch(archinfo.host(), _.pluck(self.unibuilds, 'arch'));
+    }
     if (! chosenArch) {
       buildmessage.error(
         (self.name || "this app") +
@@ -456,8 +472,9 @@ _.extend(Isopack.prototype, {
 
   _checkPluginsInitialized: function () {
     var self = this;
-    if (self._pluginsInitialized)
+    if (self._pluginsInitialized) {
       return;
+    }
     throw Error("plugins not yet initialized?");
   },
 
@@ -468,8 +485,9 @@ _.extend(Isopack.prototype, {
 
     buildmessage.assertInJob();
 
-    if (self._pluginsInitialized)
+    if (self._pluginsInitialized) {
       return;
+    }
 
     self.sourceProcessors.compiler = new buildPluginModule.SourceProcessorSet(
       self.displayName(), { hardcodeJs: true, singlePackage: true });
@@ -881,8 +899,9 @@ _.extend(Isopack.prototype, {
     // PackageMap which can be subset to create a new PackageMap object.)
     var unibuildWatchSets = {};
     if (options.isopackBuildInfoJson) {
-      if (! options.firstIsopack)
+      if (! options.firstIsopack) {
         throw Error("can't merge isopacks with buildinfo");
+      }
 
       // XXX should comprehensively sanitize (eg, typecheck) everything
       // read from json files
@@ -937,8 +956,9 @@ _.extend(Isopack.prototype, {
       var alreadyHaveUnibuild = _.find(self.unibuilds, function (unibuild) {
         return unibuild.arch === unibuildMeta.arch;
       });
-      if (alreadyHaveUnibuild)
+      if (alreadyHaveUnibuild) {
         return;
+      }
 
       var unibuildJson = JSON.parse(
         files.readFile(files.pathJoin(dir, unibuildMeta.path)));
@@ -1027,9 +1047,10 @@ _.extend(Isopack.prototype, {
             servePath: resource.servePath || undefined,
             path: resource.path || undefined
           });
-        } else
+        } else {
           throw new Error("bad resource type in isopack: " +
                           JSON.stringify(resource.type));
+        }
       });
 
       var declaredExports;
@@ -1285,8 +1306,9 @@ _.extend(Isopack.prototype, {
               concat[resource.type].push(new Buffer("\n", "utf8"));
               offset[resource.type]++;
             }
-            if (! (resource.data instanceof Buffer))
+            if (! (resource.data instanceof Buffer)) {
               throw new Error("Resource data must be a Buffer");
+            }
             unibuildJson.resources.push({
               type: resource.type,
               file: files.pathJoin(unibuildDir, resource.type),
@@ -1307,8 +1329,10 @@ _.extend(Isopack.prototype, {
 
         // Output other resources each to their own file
         _.each(unibuild.resources, function (resource) {
-          if (_.contains(["head", "body"], resource.type))
-            return; // already did this one
+          if (_.contains(["head", "body"], resource.type)) {
+            // already did this one
+            return;
+          }
 
           // If we're going to write a legacy prelink file later, track the
           // original form of the resource object (with the source in a Buffer,
@@ -1450,21 +1474,37 @@ _.extend(Isopack.prototype, {
                   + JSON.stringify(resource));
             }
           });
-          if (jsResourcesForLegacyPrelink.length) {
-            var prelinkFile, prelinkData, packageVariables;
-            if (jsResourcesForLegacyPrelink.length === 1 &&
-                jsResourcesForLegacyPrelink[0].legacyPrelink) {
-              // Aha!  This isopack was actually a legacy isopack in the first
-              // place! So this source file is already the output of prelink,
-              // and we don't need to reprocess it.
-              prelinkFile = jsResourcesForLegacyPrelink[0];
-              // XXX It's weird that the type of object going in and out of
-              // linker.prelink is different (so that this prelinkData
-              // assignment differs from that below), ah well.
-              prelinkData = prelinkFile.data;
-              packageVariables =
-                jsResourcesForLegacyPrelink[0].legacyPrelink.packageVariables;
-            } else {
+
+          var prelinkFile, prelinkData, packageVariables;
+          if (jsResourcesForLegacyPrelink.length === 1 &&
+              jsResourcesForLegacyPrelink[0].legacyPrelink) {
+            // Aha!  This isopack was actually a legacy isopack in the first
+            // place! So this source file is already the output of prelink,
+            // and we don't need to reprocess it.
+            prelinkFile = jsResourcesForLegacyPrelink[0];
+            // XXX It's weird that the type of object going in and out of
+            // linker.prelink is different (so that this prelinkData
+            // assignment differs from that below), ah well.
+            prelinkData = prelinkFile.data;
+            packageVariables =
+              jsResourcesForLegacyPrelink[0].legacyPrelink.packageVariables;
+          } else {
+            // Determine captured variables, legacy way. First, start with the
+            // exports. We'll add the package variables after running prelink.
+            packageVariables = [];
+            var packageVariableNames = {};
+            _.each(unibuild.declaredExports, function (symbol) {
+              if (_.has(packageVariableNames, symbol.name)) {
+                return;
+              }
+              packageVariables.push({
+                name: symbol.name,
+                export: symbol.testOnly? "tests" : true
+              });
+              packageVariableNames[symbol.name] = true;
+            });
+
+            if (jsResourcesForLegacyPrelink.length) {
               // Not originally legacy; let's run prelink to make it legacy.
               var results = linker.prelink({
                 inputFiles: jsResourcesForLegacyPrelink,
@@ -1485,28 +1525,19 @@ _.extend(Isopack.prototype, {
               prelinkFile = results.files[0];
               prelinkData = new Buffer(prelinkFile.source, 'utf8');
 
-              // Determine captured variables, legacy way.
-              packageVariables = [];
-              var packageVariableNames = {};
-              _.each(unibuild.declaredExports, function (symbol) {
-                if (_.has(packageVariableNames, symbol.name))
-                  return;
-                packageVariables.push({
-                  name: symbol.name,
-                  export: symbol.testOnly? "tests" : true
-                });
-                packageVariableNames[symbol.name] = true;
-              });
               _.each(results.assignedVariables, function (name) {
-                if (_.has(packageVariableNames, name))
+                if (_.has(packageVariableNames, name)) {
                   return;
+                }
                 packageVariables.push({
                   name: name
                 });
                 packageVariableNames[name] = true;
               });
             }
+          }
 
+          if (prelinkFile && prelinkData) {
             var prelinkResource = {
               type: 'prelink',
               file: builder.writeToGeneratedFilename(
@@ -1524,9 +1555,12 @@ _.extend(Isopack.prototype, {
               );
             }
             newResources.push(prelinkResource);
+          }
 
+          if (packageVariables.length) {
             unibuildJson.packageVariables = packageVariables;
           }
+
           unibuildJson.resources = newResources;
           delete unibuildJson.declaredExports;
           builder.writeJson(legacyFilename, unibuildJson);
@@ -1605,6 +1639,7 @@ _.extend(Isopack.prototype, {
       /^tools\/meteor-services\/[^\/]+\.js$/,
       /^tools\/tool-testing\/[^\/]+\.js$/,
       /^tools\/console\/[^\/]+\.js$/,
+      /^tools\/cordova\/[^\/]+\.js$/,
       // We don't support running self-test from an install anymore
     ];
 
@@ -1704,8 +1739,9 @@ _.extend(Isopack.prototype, {
           title: "compiling " + isopacketName + " packages for the tool"
         }, function () {
           isopacketBuildContext.isopackCache.buildLocalPackages(packages);
-          if (buildmessage.jobHasMessages())
+          if (buildmessage.jobHasMessages()) {
             return;
+          }
 
           var image = bundler.buildJsImage({
             name: "isopacket-" + isopacketName,
@@ -1713,8 +1749,9 @@ _.extend(Isopack.prototype, {
             isopackCache: isopacketBuildContext.isopackCache,
             use: packages
           }).image;
-          if (buildmessage.jobHasMessages())
+          if (buildmessage.jobHasMessages()) {
             return;
+          }
 
           image.write(
             builder.enter(files.pathJoin('isopackets', isopacketName)));
@@ -1746,6 +1783,26 @@ _.extend(Isopack.prototype, {
     return watchSet;
   }),
 
+  getClientWatchSet: Profile("Isopack#getClientWatchSet", function () {
+    var watchSet = this.pluginWatchSet.clone();
+    _.each(this.unibuilds, function (unibuild) {
+      if (/^web\./.test(unibuild.arch)) {
+        watchSet.merge(unibuild.watchSet);
+      }
+    });
+    return watchSet;
+  }),
+
+  getServerWatchSet: Profile("Isopack#getServerWatchSet", function () {
+    var watchSet = this.pluginWatchSet.clone();
+    _.each(this.unibuilds, function (unibuild) {
+      if (! /^web\./.test(unibuild.arch)) {
+        watchSet.merge(unibuild.watchSet);
+      }
+    });
+    return watchSet;
+  }),
+
   // Similar to PackageSource.getPackagesToLoadFirst, but doesn't include
   // packages used by plugins, because plugin dependencies are already
   // statically included in this built Isopack. Used by
@@ -1758,8 +1815,9 @@ _.extend(Isopack.prototype, {
     var self = this;
     var packages = {};
     var processUse = function (use) {
-      if (use.weak || use.unordered)
+      if (use.weak || use.unordered) {
         return;
+      }
       // Only include real packages, not isobuild:* pseudo-packages.
       if (compiler.isIsobuildFeaturePackage(use.package)) {
         return;

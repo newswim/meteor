@@ -79,17 +79,28 @@ export class CordovaBuilder {
 
     // Set some defaults different from the Cordova defaults
     this.additionalConfiguration = {
-      'webviewbounce': false,
-      'DisallowOverscroll': true,
-      'deployment-target': '7.0'
+      global: {
+        'webviewbounce': false,
+        'DisallowOverscroll': true,
+        'deployment-target': '7.0'
+      },
+      platform: {
+          ios: {},
+          android: {}
+      }
     };
 
     const packageMap = this.projectContext.packageMap;
 
     if (packageMap && packageMap.getInfo('launch-screen')) {
-      this.additionalConfiguration.AutoHideSplashScreen = false;
-      this.additionalConfiguration.SplashScreen = 'screen';
-      this.additionalConfiguration.SplashScreenDelay = 10000;
+      this.additionalConfiguration.global.AutoHideSplashScreen = false;
+      this.additionalConfiguration.global.SplashScreen = 'screen';
+      this.additionalConfiguration.global.SplashScreenDelay = 10000;
+    }
+
+    if (packageMap && packageMap.getInfo('mobile-status-bar')) {
+      this.additionalConfiguration.global.StatusBarOverlaysWebView = false;
+      this.additionalConfiguration.global.StatusBarStyle = 'default';
     }
 
     // Default access rules for plain Meteor-Cordova apps.
@@ -209,8 +220,8 @@ export class CordovaBuilder {
       email: this.metadata.email
     }).txt(this.metadata.author);
 
-    // Set the additional configuration preferences
-    _.each(this.additionalConfiguration, (value, key) => {
+    // Set the additional global configuration preferences
+    _.each(this.additionalConfiguration.global, (value, key) => {
       config.element('preference', {
         name: key,
         value: value.toString()
@@ -223,14 +234,27 @@ export class CordovaBuilder {
     // Copy all the access rules
     _.each(this.accessRules, (rule, pattern) => {
       var opts = { origin: pattern };
-      if (rule === 'external')
+      if (rule === 'external') {
         opts['launch-external'] = true;
+      }
 
       config.element('access', opts);
     });
 
-    const iosPlatformElement = config.element('platform', { name: 'ios' });
-    const androidPlatformElement = config.element('platform', { name: 'android' });
+    const platformElement = {
+      ios: config.element('platform', {name: 'ios'}),
+      android: config.element('platform', {name: 'android'})
+    }
+
+    // Set the additional platform-specific configuration preferences
+    _.each(this.additionalConfiguration.platform, (prefs, platform) => {
+      _.each(prefs, (value, key) => {
+        platformElement[platform].element('preference', {
+          name: key,
+          value: value.toString()
+        });
+      });
+    });
 
     if (shouldCopyResources) {
       // Prepare the resources folder
@@ -239,10 +263,10 @@ export class CordovaBuilder {
 
       Console.debug('Copying resources for mobile apps');
 
-      this.configureAndCopyImages(iconsIosSizes, iosPlatformElement, 'icon');
-      this.configureAndCopyImages(iconsAndroidSizes, androidPlatformElement, 'icon');
-      this.configureAndCopyImages(launchIosSizes, iosPlatformElement, 'splash');
-      this.configureAndCopyImages(launchAndroidSizes, androidPlatformElement, 'splash');
+      this.configureAndCopyImages(iconsIosSizes, platformElement.ios, 'icon');
+      this.configureAndCopyImages(iconsAndroidSizes, platformElement.android, 'icon');
+      this.configureAndCopyImages(launchIosSizes, platformElement.ios, 'splash');
+      this.configureAndCopyImages(launchAndroidSizes, platformElement.android, 'splash');
     }
 
     Console.debug('Writing new config.xml');
@@ -275,8 +299,9 @@ export class CordovaBuilder {
       const [width, height] = size.split('x');
 
       const suppliedPath = this.imagePaths[tag][name];
-      if (!suppliedPath)
+      if (!suppliedPath) {
         return;
+      }
 
       const suppliedFilename = _.last(suppliedPath.split(files.pathSep));
       let extension = _.last(suppliedFilename.split('.'));
@@ -360,9 +385,7 @@ export class CordovaBuilder {
       release.current.isCheckout() ? "none" : release.current.name;
 
     let configDummy = {};
-    if (publicSettings) {
-      configDummy.PUBLIC_SETTINGS = publicSettings;
-    }
+    configDummy.PUBLIC_SETTINGS = publicSettings || {};
 
     const { WebAppHashing } =
       isopackets.load('cordova-support')['webapp-hashing'];
@@ -384,8 +407,9 @@ export class CordovaBuilder {
       appId: this.projectContext.appIdentifier
     };
 
-    if (publicSettings)
+    if (publicSettings) {
       runtimeConfig.PUBLIC_SETTINGS = publicSettings;
+    }
 
     const { Boilerplate } =
       isopackets.load('cordova-support')['boilerplate-generator'];
@@ -432,8 +456,9 @@ function createAppConfiguration(builder) {
     info: function (options) {
       // check that every key is meaningful
       _.each(options, function (value, key) {
-        if (!_.has(builder.metadata, key))
+        if (!_.has(builder.metadata, key)) {
           throw new Error("Unknown key in App.info configuration: " + key);
+        }
       });
 
       _.extend(builder.metadata, options);
@@ -444,10 +469,20 @@ function createAppConfiguration(builder) {
      * @param {String} name A preference name supported by Cordova's
      * `config.xml`.
      * @param {String} value The value for that preference.
+     * @param {String} [platform] Optional. A platform name (either `ios` or `android`) to add a platform-specific preference.
      * @memberOf App
      */
-    setPreference: function (key, value) {
-      builder.additionalConfiguration[key] = value;
+    setPreference: function (key, value, platform) {
+      if (platform) {
+        if (!_.contains(['ios', 'android'], platform)) {
+          throw new Error(`Unknown platform in App.setPreference: ${platform}. \
+Valid platforms are: ios, android.`);
+        }
+
+        builder.additionalConfiguration.platform[platform][key] = value;
+      } else {
+        builder.additionalConfiguration.global[key] = value;
+      }
     },
 
     /**
@@ -484,8 +519,9 @@ function createAppConfiguration(builder) {
       var validDevices =
         _.keys(iconsIosSizes).concat(_.keys(iconsAndroidSizes));
       _.each(icons, function (value, key) {
-        if (!_.include(validDevices, key))
+        if (!_.include(validDevices, key)) {
           throw new Error(key + ": unknown key in App.icons configuration.");
+        }
       });
       _.extend(builder.imagePaths.icon, icons);
     },
@@ -527,8 +563,9 @@ function createAppConfiguration(builder) {
         _.keys(launchIosSizes).concat(_.keys(launchAndroidSizes));
 
       _.each(launchScreens, function (value, key) {
-        if (!_.include(validDevices, key))
+        if (!_.include(validDevices, key)) {
           throw new Error(key + ": unknown key in App.launchScreens configuration.");
+        }
       });
       _.extend(builder.imagePaths.splash, launchScreens);
     },

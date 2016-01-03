@@ -6,7 +6,6 @@ var buildmessage = require('../utils/buildmessage.js');
 var auth = require('../meteor-services/auth.js');
 var authClient = require('../meteor-services/auth-client.js');
 var config = require('../meteor-services/config.js');
-var Future = require('fibers/future');
 var runLog = require('../runners/run-log.js');
 var utils = require('../utils/utils.js');
 var httpHelpers = require('../utils/http-helpers.js');
@@ -52,10 +51,12 @@ var __dirnameConverted = files.convertToStandardPath(__dirname);
 // In the future, you should be able to make this default to some
 // other domain you control, rather than 'meteor.com'.
 var qualifySitename = function (site) {
-  if (site.indexOf(".") === -1)
+  if (site.indexOf(".") === -1) {
     site = site + ".meteor.com";
-  while (site.length && site[site.length - 1] === ".")
+  }
+  while (site.length && site[site.length - 1] === ".") {
     site = site.substring(0, site.length - 1);
+  }
   return site;
 };
 
@@ -187,8 +188,9 @@ main.registerCommand({
   catalogRefresh: new catalog.Refresh.Never()
 }, function (options) {
   if (release.current === null) {
-    if (! options.appDir)
+    if (! options.appDir) {
       throw new Error("missing release, but not in an app?");
+    }
     Console.error(
       "This project was created with a checkout of Meteor, rather than an " +
       "official release, and doesn't have a release number associated with " +
@@ -323,8 +325,9 @@ function doRunCommand(options) {
     appPort = appPortMatch[2] ? parseInt(appPortMatch[2]) : null;
   }
 
-  if (options['raw-logs'])
+  if (options['raw-logs']) {
     runLog.setRawLogs(true);
+  }
 
   // Velocity testing. Sets up a DDP connection to the app process and
   // runs phantomjs.
@@ -342,7 +345,7 @@ function doRunCommand(options) {
 
   if (!_.isEmpty(runTargets)) {
     main.captureAndExit('', 'preparing Cordova project', () => {
-      cordovaProject = new CordovaProject(projectContext, {
+      const cordovaProject = new CordovaProject(projectContext, {
         settingsFile: options.settings,
         mobileServerUrl: utils.formatUrl(parsedMobileServerUrl) });
 
@@ -516,10 +519,11 @@ main.registerCommand({
           return transform(f);
         },
         transformContents: function (contents, f) {
-          if ((/(\.html|\.js|\.css)/).test(f))
+          if ((/(\.html|\.js|\.css)/).test(f)) {
             return new Buffer(transform(contents.toString()));
-          else
+          } else {
             return contents;
+          }
         },
         ignore: [/^local$/]
       });
@@ -578,12 +582,13 @@ main.registerCommand({
   };
 
   var appPathAsEntered;
-  if (options.args.length === 1)
+  if (options.args.length === 1) {
     appPathAsEntered = options.args[0];
-  else if (options.example)
+  } else if (options.example) {
     appPathAsEntered = options.example;
-  else
+  } else {
     throw new main.ShowUsage;
+  }
   var appPath = files.pathResolve(appPathAsEntered);
 
   if (files.findAppDir(appPath)) {
@@ -597,12 +602,12 @@ main.registerCommand({
     // If trying to create in current directory
     appName = files.pathBasename(files.cwd());
   } else {
-    appName = files.pathBasename(options.appDir);
+    appName = files.pathBasename(appPath);
   }
 
 
   var transform = function (x) {
-    return x.replace(/~name~/g, files.pathBasename(appPath));
+    return x.replace(/~name~/g, appName);
   };
 
   // These file extensions are usually metadata, not app code
@@ -682,10 +687,11 @@ ${nonCodeFileExts.join(', ')}
         return transform(f);
       },
       transformContents: function (contents, f) {
-        if ((/(\.html|\.js|\.css)/).test(f))
+        if ((/(\.html|\.js|\.css)/).test(f)) {
           return new Buffer(transform(contents.toString()));
-        else
+        } else {
           return contents;
+        }
       },
       ignore: toIgnore
     });
@@ -704,13 +710,15 @@ ${nonCodeFileExts.join(', ')}
 
   main.captureAndExit("=> Errors while creating your project", function () {
     projectContext.readProjectMetadata();
-    if (buildmessage.jobHasMessages())
+    if (buildmessage.jobHasMessages()) {
       return;
+    }
 
     projectContext.releaseFile.write(
       release.current.isCheckout() ? "none" : release.current.name);
-    if (buildmessage.jobHasMessages())
+    if (buildmessage.jobHasMessages()) {
       return;
+    }
 
     // Any upgrader that is in this version of Meteor doesn't need to be run on
     // this project.
@@ -724,7 +732,7 @@ ${nonCodeFileExts.join(', ')}
   // in the template's versions file).
 
   var appNameToDisplay = appPathAsEntered === "." ?
-    "current directory" : appPathAsEntered;
+    "current directory" : `'${appPathAsEntered}'`;
 
   var message = `Created a new Meteor app in ${appNameToDisplay}`;
 
@@ -741,9 +749,14 @@ ${nonCodeFileExts.join(', ')}
   Console.info("To run your new app:");
 
   if (appPathAsEntered !== ".") {
+    // Wrap the app path in quotes if it contains spaces
+    const appPathWithQuotesIfSpaces = appPathAsEntered.indexOf(' ') === -1 ?
+      appPathAsEntered :
+      `'${appPathAsEntered}'`;
+
     // Don't tell people to 'cd .'
     Console.info(
-      Console.command("cd " + appPathAsEntered),
+      Console.command("cd " + appPathWithQuotesIfSpaces),
         Console.options({ indent: 2 }));
   }
 
@@ -798,7 +811,7 @@ main.registerCommand(_.extend({ name: 'bundle', hidden: true
       "This command has been deprecated in favor of " +
       Console.command("'meteor build'") + ", which allows you to " +
       "build for multiple platforms and outputs a directory instead of " +
-      "a single tarball. See " + Console.command("'meteor help build'") +
+      "a single tarball. See " + Console.command("'meteor help build'") + " " +
       "for more information.");
       Console.error();
       return buildCommand(_.extend(options, { _serverOnly: true }));
@@ -848,7 +861,11 @@ var buildCommand = function (options) {
   if (!options._serverOnly) {
     cordovaPlatforms = projectContext.platformList.getCordovaPlatforms();
 
-    if (process.platform !== 'darwin' && _.contains(cordovaPlatforms, 'ios')) {
+    if (process.platform === 'win32' && !_.isEmpty(cordovaPlatforms)) {
+      Console.warn(`Can't build for mobile on Windows. Skipping the following \
+platforms: ${cordovaPlatforms.join(", ")}`);
+      cordovaPlatforms = [];
+    } else if (process.platform !== 'darwin' && _.contains(cordovaPlatforms, 'ios')) {
       cordovaPlatforms = _.without(cordovaPlatforms, 'ios');
       Console.warn("Currently, it is only possible to build iOS apps \
 on an OS X system.");
@@ -916,7 +933,8 @@ on an OS X system.");
       //     packages with binary npm dependencies
       serverArch: bundleArch,
       buildMode: options.debug ? 'development' : 'production',
-    }
+    },
+    providePackageJSONForUnavailableBinaryDeps: !!process.env.METEOR_BINARY_DEP_WORKAROUND,
   });
   if (bundleResult.errors) {
     Console.error("Errors prevented bundling:");
@@ -924,8 +942,9 @@ on an OS X system.");
     return 1;
   }
 
-  if (! options._serverOnly)
+  if (! options._serverOnly) {
     files.mkdir_p(outputPath);
+  }
 
   if (! options.directory) {
     main.captureAndExit('', 'creating server tarball', () => {
@@ -950,7 +969,7 @@ on an OS X system.");
           settingsFile: options.settings,
           mobileServerUrl: utils.formatUrl(parsedMobileServerUrl) });
 
-        const plugins = cordova.pluginsFromStarManifest(
+        const plugins = cordova.pluginVersionsFromStarManifest(
           bundleResult.starManifest);
 
         cordovaProject.prepareFromAppBundle(bundlePath, plugins);
@@ -961,7 +980,9 @@ on an OS X system.");
           { title: `building Cordova app for \
 ${cordova.displayNameForPlatform(platform)}` }, () => {
             let buildOptions = [];
-            if (!options.debug) buildOptions.push('--release');
+            if (!options.debug) {
+              buildOptions.push('--release');
+            }
             cordovaProject.buildForPlatform(platform, buildOptions);
 
             const buildPath = files.pathJoin(
@@ -984,8 +1005,10 @@ https://github.com/meteor/meteor/wiki/How-to-submit-your-iOS-app-to-App-Store
               const apkPath = files.pathJoin(buildPath, 'build/outputs/apk',
                 options.debug ? 'android-debug.apk' : 'android-release-unsigned.apk')
 
+              if (files.exists(apkPath)) {
               files.copyFile(apkPath, files.pathJoin(platformOutputPath,
                 options.debug ? 'debug.apk' : 'release-unsigned.apk'));
+              }
 
               files.writeFile(
                 files.pathJoin(platformOutputPath, 'README'),
@@ -1120,16 +1143,16 @@ main.registerCommand({
     if (! mongoPort) {
       Console.info("mongo: Meteor isn't running a local MongoDB server.");
       Console.info();
-      Console.info(
-        "This command only works while Meteor is running your application " +
-        "locally. Start your application first. (This error will also occur " +
-        "if you asked Meteor to use a different MongoDB server with " +
-        "$MONGO_URL when you ran your application.)");
+      Console.info(`\
+This command only works while Meteor is running your application locally. \
+Start your application first with 'meteor' and then run this command in a new \
+terminal. This error will also occur if you asked Meteor to use a different \
+MongoDB server with $MONGO_URL when you ran your application.`);
       Console.info();
-      Console.info(
-        "If you're trying to connect to the database of an app you deployed " +
-        "with " + Console.command("'meteor deploy'") +
-        ", specify your site's name with this command.");
+      Console.info(`\
+If you're trying to connect to the database of an app you deployed with \
+${Console.command("'meteor deploy'")}, specify your site's name as an argument \
+to this command.`);
       return 1;
     }
     mongoUrl = "mongodb://127.0.0.1:" + mongoPort + "/meteor";
@@ -1142,15 +1165,17 @@ main.registerCommand({
     mongoUrl = deploy.temporaryMongoUrl(site);
     usedMeteorAccount = true;
 
-    if (! mongoUrl)
+    if (! mongoUrl) {
       // temporaryMongoUrl() will have printed an error message
       return 1;
+    }
   }
   if (options.url) {
     console.log(mongoUrl);
   } else {
-    if (usedMeteorAccount)
+    if (usedMeteorAccount) {
       auth.maybePrintRegistrationLink();
+    }
     process.stdin.pause();
     var runMongo = require('../runners/run-mongo.js');
     runMongo.runMongoShell(mongoUrl);
@@ -1251,8 +1276,9 @@ main.registerCommand({
       "To instantly deploy your app on a free testing server,",
       "just enter your email address!");
     Console.error();
-    if (! auth.registerOrLogIn())
+    if (! auth.registerOrLogIn()) {
       return 1;
+    }
   }
 
   // Override architecture iff applicable.
@@ -1363,12 +1389,13 @@ main.registerCommand({
     return 1;
   }
 
-  if (options.add)
+  if (options.add) {
     return deploy.changeAuthorized(site, "add", options.add);
-  else if (options.remove)
+  } else if (options.remove) {
     return deploy.changeAuthorized(site, "remove", options.remove);
-  else
+  } else {
     return deploy.listAuthorized(site);
+  }
 });
 
 ///////////////////////////////////////////////////////////////////////////////
@@ -1455,7 +1482,11 @@ main.registerCommand({
     'allow-incompatible-update': { type: Boolean },
 
     // Don't print linting messages for tested packages
-    'no-lint': { type: Boolean }
+    'no-lint': { type: Boolean },
+
+    // allow excluding packages when testing all packages.
+    // should be a comma-separated list of package names.
+    'exclude': { type: String }
   },
   catalogRefresh: new catalog.Refresh.Never()
 }, function (options) {
@@ -1483,8 +1514,9 @@ main.registerCommand({
   // Download packages for our architecture, and for the deploy server's
   // architecture if we're deploying.
   var serverArchitectures = [archinfo.host()];
-  if (options.deploy && DEPLOY_ARCH !== archinfo.host())
+  if (options.deploy && DEPLOY_ARCH !== archinfo.host()) {
     serverArchitectures.push(DEPLOY_ARCH);
+  }
 
   // XXX Because every run uses a new app with its own IsopackCache directory,
   //     this always does a clean build of all packages. Maybe we can speed up
@@ -1511,6 +1543,16 @@ main.registerCommand({
     release.current.isCheckout() ? "none" : release.current.name);
 
   var packagesToAdd = getTestPackageNames(projectContext, options.args);
+
+  // filter out excluded packages
+  var excludedPackages = options.exclude && options.exclude.split(',');
+  if (excludedPackages) {
+    packagesToAdd = _.filter(packagesToAdd, function (p) {
+      return ! _.some(excludedPackages, function (excluded) {
+        return p.replace(/^local-test:/, '') === excluded;
+      });
+    });
+  }
 
   // Use the driver package
   // Also, add `autoupdate` so that you don't have to manually refresh the tests
@@ -1539,7 +1581,7 @@ main.registerCommand({
 
   if (!_.isEmpty(runTargets)) {
     main.captureAndExit('', 'preparing Cordova project', () => {
-      cordovaProject = new CordovaProject(projectContext, {
+      const cordovaProject = new CordovaProject(projectContext, {
         settingsFile: options.settings,
         mobileServerUrl: utils.formatUrl(parsedMobileServerUrl) });
 
@@ -1895,7 +1937,8 @@ main.registerCommand({
     browserstack: { type: Boolean },
     history: { type: Number },
     list: { type: Boolean },
-    file: { type: String }
+    file: { type: String },
+    exclude: { type: String }
   },
   hidden: true,
   catalogRefresh: new catalog.Refresh.Never()
@@ -1913,8 +1956,9 @@ main.registerCommand({
     try {
       require('../utils/http-helpers.js').getUrl("http://www.google.com/");
     } catch (e) {
-      if (e instanceof files.OfflineError)
+      if (e instanceof files.OfflineError) {
         offline = true;
+      }
     }
   }
 
@@ -1922,8 +1966,9 @@ main.registerCommand({
     try {
       return new RegExp(str);
     } catch (e) {
-      if (!(e instanceof SyntaxError))
+      if (!(e instanceof SyntaxError)) {
         throw e;
+      }
       Console.error("Bad regular expression: " + str);
       return null;
     }
@@ -1941,6 +1986,14 @@ main.registerCommand({
   if (options.file) {
     fileRegexp = compileRegexp(options.file);
     if (! fileRegexp) {
+      return 1;
+    }
+  }
+
+  var excludeRegexp = undefined;
+  if (options.exclude) {
+    excludeRegexp = compileRegexp(options.exclude);
+    if (! excludeRegexp) {
       return 1;
     }
   }
@@ -1970,6 +2023,7 @@ main.registerCommand({
     galaxyOnly: options.galaxy,
     testRegexp: testRegexp,
     fileRegexp: fileRegexp,
+    excludeRegexp: excludeRegexp,
     // other options
     historyLines: options.history,
     clients: clients
@@ -2104,7 +2158,6 @@ main.registerCommand({
   maybeLog("Connecting: " + Console.command("ssh " + printOptions));
 
   var child_process = require('child_process');
-  var future = new Future;
 
   if (arch.match(/win/)) {
     // The ssh output from Windows machines is buggy, it can overlay your
@@ -2117,32 +2170,27 @@ main.registerCommand({
     "ssh", connOptions,
     { stdio: 'inherit' }); // Redirect spawn stdio to process
 
-  sshCommand.on('error', function (err) {
-    if (err.code === "ENOENT") {
-      if (process.platform === "win32") {
-        Console.error("Could not find the `ssh` command in your PATH.",
-          "Please read this page about using the get-machine command on Windows:",
-          Console.url("https://github.com/meteor/meteor/wiki/Accessing-Meteor-provided-build-machines-from-Windows"));
-      } else {
-        Console.error("Could not find the `ssh` command in your PATH.");
+  return new Promise(function (resolve) {
+    sshCommand.on('error', function (err) {
+      if (err.code === "ENOENT") {
+        if (process.platform === "win32") {
+          Console.error("Could not find the `ssh` command in your PATH.",
+                        "Please read this page about using the get-machine command on Windows:",
+                        Console.url("https://github.com/meteor/meteor/wiki/Accessing-Meteor-provided-build-machines-from-Windows"));
+        } else {
+          Console.error("Could not find the `ssh` command in your PATH.");
+        }
+
+        resolve(1);
       }
+    });
 
-      future.return(1);
-    }
-  });
-
-  sshCommand.on('exit', function (code, signal) {
-    if (signal) {
+    sshCommand.on('exit', function (code, signal) {
       // XXX: We should process the signal in some way, but I am not sure we
       // care right now.
-      future.return(1);
-    } else {
-      future.return(code);
-    }
-  });
-  var sshEnd = future.wait();
-
-  return sshEnd;
+      resolve(signal ? 1 : code);
+    });
+  }).await();
 });
 
 
@@ -2161,7 +2209,6 @@ main.registerCommand({
   catalogRefresh: new catalog.Refresh.Never()
 }, function (options) {
   buildmessage.enterJob({ title: "A test progressbar" }, function () {
-    var doneFuture = new Future;
     var progress = buildmessage.getCurrentProgressTracker();
     var totalProgress = { current: 0, end: options.secs, done: false };
     var i = 0;
@@ -2171,23 +2218,25 @@ main.registerCommand({
       totalProgress.end = undefined;
     }
 
-    var updateProgress = function () {
-      i++;
-      if (! options.spinner) {
-        totalProgress.current = i;
+    new Promise(function (resolve) {
+      function updateProgress() {
+        i++;
+        if (! options.spinner) {
+          totalProgress.current = i;
+        }
+
+        if (i === n) {
+          totalProgress.done = true;
+          progress.reportProgress(totalProgress);
+          resolve();
+        } else {
+          progress.reportProgress(totalProgress);
+          setTimeout(updateProgress, 1000);
+        }
       }
 
-      if (i === n) {
-        totalProgress.done = true;
-        progress.reportProgress(totalProgress);
-        doneFuture.return();
-      } else {
-        progress.reportProgress(totalProgress);
-        setTimeout(updateProgress, 1000);
-      }
-    };
-    setTimeout(updateProgress);
-    doneFuture.wait();
+      setTimeout(updateProgress);
+    }).await();
   });
 });
 
@@ -2214,17 +2263,20 @@ main.registerCommand({
   catalogRefresh: new catalog.Refresh.Never()
 }, function (options) {
   var p = function (key) {
-    if (_.has(options, key))
+    if (_.has(options, key)) {
       return JSON.stringify(options[key]);
+    }
     return 'none';
   };
 
   Console.info(p('ething') + " " + p('port') + " " + p('changed') +
                        " " + p('args'));
-  if (options.url)
+  if (options.url) {
     Console.info('url');
-  if (options['delete'])
+  }
+  if (options['delete']) {
     Console.info('delete');
+  }
 });
 
 ///////////////////////////////////////////////////////////////////////////////

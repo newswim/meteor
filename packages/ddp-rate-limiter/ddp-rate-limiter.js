@@ -1,12 +1,12 @@
 // Rate Limiter built into DDP with a default error message. See README or
 // online documentation for more details.
-DDPRateLimiter = {}
+DDPRateLimiter = {};
 
 var errorMessage = function (rateLimitResult) {
   return "Error, too many requests. Please slow down. You must wait " +
     Math.ceil(rateLimitResult.timeToReset / 1000) + " seconds before " +
     "trying again.";
-}
+};
 var rateLimiter = new RateLimiter();
 
 DDPRateLimiter.getErrorMessage = function (rateLimitResult) {
@@ -14,7 +14,7 @@ DDPRateLimiter.getErrorMessage = function (rateLimitResult) {
     return errorMessage(rateLimitResult);
   else
     return errorMessage;
-}
+};
 
 /**
  * @summary Set error message text when method or subscription rate limit
@@ -23,10 +23,11 @@ DDPRateLimiter.getErrorMessage = function (rateLimitResult) {
  * `timeToReset` field that specifies the number of milliseconds until the next
  * method or subscription is allowed to run. The function must return a string
  * of the error message.
+ * @locus Server
  */
 DDPRateLimiter.setErrorMessage = function (message) {
   errorMessage = message;
-}
+};
 
 /**
  * @summary
@@ -63,6 +64,7 @@ DDPRateLimiter.setErrorMessage = function (message) {
  * Default = 10.
  * @param {number} timeInterval time interval in milliseconds after which
  * rule's counters are reset. Default = 1000.
+ * @locus Server
  */
 DDPRateLimiter.addRule = function (matcher, numRequests, timeInterval) {
   return rateLimiter.addRule(matcher, numRequests, timeInterval);
@@ -70,24 +72,25 @@ DDPRateLimiter.addRule = function (matcher, numRequests, timeInterval) {
 
 DDPRateLimiter.printRules = function () {
   return rateLimiter.rules;
-}
+};
 
 /**
  * @summary Removes the specified rule from the rate limiter. If rule had
  * hit a rate limit, that limit is removed as well.
  * @param  {string} id 'ruleId' returned from `addRule`
  * @return {boolean}    True if a rule was removed.
+ * @locus Server
  */
 DDPRateLimiter.removeRule = function (id) {
   return rateLimiter.removeRule(id);
-}
+};
 
 // This is accessed inside livedata_server.js, but shouldn't be called by any
 // user.
 DDPRateLimiter._increment = function (input) {
   rateLimiter.increment(input);
-}
+};
 
 DDPRateLimiter._check = function (input) {
   return rateLimiter.check(input);
-}
+};

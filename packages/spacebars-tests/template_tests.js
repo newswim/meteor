@@ -93,6 +93,54 @@ Tinytest.add("spacebars-tests - template_tests - simple helper", function (test)
   }, /No such function/);
 });
 
+Tinytest.add("spacebars-tests - template_tests - member helper", function (test) {
+  var baseTmpl = Template.spacebars_template_test_member_helper;
+
+  // Test that returning function member of a data object can be used as a
+  // a helper within a template, in this case, {{user.prefixName 'Mr.'}}
+  var tmpl1 = copyTemplate(baseTmpl);
+  var name = ReactiveVar('foo');
+  tmpl1.helpers({
+    user: function() {
+      return {
+        prefixName: function(prefix) {
+          return prefix + ' ' + name.get();
+        },
+      };
+    },
+  });
+  var div = renderToDiv(tmpl1);
+  test.equal(canonicalizeHtml(div.innerHTML), 'Mr. foo');
+  name.set('bar');
+  Tracker.flush();
+  test.equal(canonicalizeHtml(div.innerHTML), 'Mr. bar');
+
+  // Test that `{{user.prefixName 'Mr.'}}` returns nothing if `user` is not
+  // not a function or is completely missing from helpers.
+  var tmpl2 = copyTemplate(baseTmpl);
+  tmpl2.helpers({user: 3});
+  div = renderToDiv(tmpl2);
+  test.equal(canonicalizeHtml(div.innerHTML), '');
+
+  var tmpl3 = copyTemplate(baseTmpl);
+  div = renderToDiv(tmpl3);
+  test.equal(canonicalizeHtml(div.innerHTML), '');
+
+  // Test that `{{user.prefixName 'Mr.'}}` returns nothing if the `user`
+  // returns null. Before fixing Meteor issue #5441, this test would throw.
+  var tmpl4 = copyTemplate(baseTmpl);
+  tmpl4.helpers({user: function () {}});
+  div = renderToDiv(tmpl4);
+  test.equal(canonicalizeHtml(div.innerHTML), '');
+
+  // One more test, similar to the above, but where `user` is not null but
+  // `user.prefixName` is. This test was also broken prior to the fix.
+  var tmpl4 = copyTemplate(baseTmpl);
+  tmpl4.helpers({user: function () { return {prefixName: null}; }});
+  div = renderToDiv(tmpl4);
+  test.equal(canonicalizeHtml(div.innerHTML), '');
+});
+
 Tinytest.add("spacebars-tests - template_tests - dynamic template", function (test) {
   var tmpl = Template.spacebars_template_test_dynamic_template;
   var aaa = Template.spacebars_template_test_aaa;
@@ -1428,7 +1476,7 @@ _.each(['textarea', 'text', 'password', 'submit', 'button',
         },
         type: type
       });
-    };
+    }
 
     var div = renderToDiv(tmpl);
     document.body.appendChild(div);
@@ -3225,6 +3273,25 @@ Tinytest.add("spacebars-tests - template_tests - new #each extends data context"
   Blaze.remove(view);
 });
 
+// Same as above, but now the argument to each in has a subexpression
+Tinytest.add("spacebars-tests - template_tests - new #each with subexpression (#5137)", function (test) {
+  var tmpl = Template.spacebars_template_test_new_each_data_context_subexpr;
+  tmpl.helpers({
+    dataContext: function () {
+      return {
+        items: [{text:"a"}, {text:"b"}],
+        toplevel: "XYZ"
+      };
+    }
+  });
+
+  var div = document.createElement("DIV");
+  var theWith = Blaze.render(tmpl, div);
+  test.equal(canonicalizeHtml(div.innerHTML), '<div>a -- XYZ</div><div>b -- XYZ</div>');
+  var view = Blaze.getView(div.querySelector('div'));
+  Blaze.remove(view);
+});
+
 Tinytest.add("spacebars-tests - template_tests - new #each binding lookup is scoped to the template", function (test) {
   var tmpl = Template.spacebars_template_test_new_each_lookup_top_level;
   tmpl.helpers({
@@ -3428,4 +3495,18 @@ Tinytest.add("spacebars-tests - template_tests - lexical scope doesn't leak", fu
   test.throws(function () {
     var div = renderToDiv(tmpl);
   }, /Unsupported directive/);
+});
+
+// PR #5138
+Tinytest.add("spacebars-tests - template_tests - multiple arguments in each-in", function (test) {
+  var tmpl = Template.spacebars_template_test_each_in_multi_args;
+  tmpl.helpers({
+    list: ['a', 'b', 'c'],
+    helper: function (list) {
+      return list.reverse();
+    }
+  });
+
+  var div = renderToDiv(tmpl);
+  test.equal(canonicalizeHtml(div.innerHTML), "<div>c</div><div>b</div><div>a</div>");
 });
